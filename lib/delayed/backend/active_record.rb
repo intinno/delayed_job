@@ -8,7 +8,7 @@ class ActiveRecord::Base
       super
     end
   end
-  
+
   def dump_for_delayed_job
     "#{self.class};#{id}"
   end
@@ -38,7 +38,11 @@ module Delayed
           scope = self.ready_to_run(worker_name, max_run_time)
           scope = scope.scoped(:conditions => ['priority >= ?', Worker.min_priority]) if Worker.min_priority
           scope = scope.scoped(:conditions => ['priority <= ?', Worker.max_priority]) if Worker.max_priority
-      
+
+          # TODO enable this once you start deleting finished jobs when delete_successful_jobs is true at regular intervals.
+          # scope = scope.scoped(:conditions => ['finished_at is ?', 'NULL']) unless Worker.delete_successful_jobs
+          scope = scope.scoped(:conditions => ['finished_at IS NULL'])
+
           ::ActiveRecord::Base.silence do
             scope.by_priority.all(:limit => limit)
           end

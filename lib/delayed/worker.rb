@@ -6,12 +6,18 @@ module Delayed
     self.sleep_delay = 5
     self.max_attempts = 25
     self.max_run_time = 4.hours
-    
+
     # By default failed jobs are destroyed after too many attempts. If you want to keep them around
     # (perhaps to inspect the reason for the failure), set this to false.
     cattr_accessor :destroy_failed_jobs
     self.destroy_failed_jobs = true
-    
+
+    # By default succcesful jobs are destroyed. If you want to keep them around set this to false
+    # in config/initializers/delayed_job_config.rb
+    # TODO if this is true, then delete all jobs with finished_at at regular intervals.
+    cattr_accessor :destroy_successful_jobs
+    self.destroy_successful_jobs = true
+
     self.logger = if defined?(Merb::Logger)
       Merb.logger
     elsif defined?(RAILS_DEFAULT_LOGGER)
@@ -20,9 +26,9 @@ module Delayed
 
     # name_prefix is ignored if name is set directly
     attr_accessor :name_prefix
-    
+
     cattr_reader :backend
-    
+
     def self.backend=(backend)
       if backend.is_a? Symbol
         require "delayed/backend/#{backend}"
@@ -82,7 +88,7 @@ module Delayed
     ensure
       Delayed::Job.clear_locks!(name)
     end
-    
+
     # Do num jobs and return stats on success/failure.
     # Exit early if interrupted.
     def work_off(num = 100)
@@ -102,11 +108,11 @@ module Delayed
 
       return [success, failure]
     end
-    
+
     def run(job)
       runtime =  Benchmark.realtime do
         Timeout.timeout(self.class.max_run_time.to_i) { job.invoke_job }
-        job.destroy
+        self.class.destroy_successful_jobs ? job.destroy : job.update_attribute(:finished_at, Time.now)
       end
       # TODO: warn if runtime > max_run_time ?
       say "* [JOB] #{name} completed after %.4f" % runtime
@@ -115,7 +121,7 @@ module Delayed
       handle_failed_job(job, e)
       return false  # work failed
     end
-    
+
     # Reschedule the job in the future (when a job fails).
     # Uses an exponential scale depending on the number of failed attempts.
     def reschedule(job, time = nil)
@@ -136,13 +142,13 @@ module Delayed
     end
 
   protected
-    
+
     def handle_failed_job(job, error)
       job.last_error = error.message + "\n" + error.backtrace.join("\n")
       say "* [JOB] #{name} failed with #{error.class.name}: #{error.message} - #{job.attempts} failed attempts", Logger::ERROR
       reschedule(job)
     end
-    
+
     # Run the next job we can get an exclusive lock on.
     # If no jobs are left we return nil
     def reserve_and_run_one_job
